@@ -1,0 +1,425 @@
+Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 21:41:19
+firstproj.as						     Page 1 - 1
+
+
+				title firstproj.asm							;DOS file name of program
+
+				.586                                    ;enable all pentium instructions
+				.model flat, stdcall                    ;memory model & calling convention
+				.stack 8192                             ;allocate 8k for stack
+
+				INCLUDELIB kernel32.lib                 ;Include the kernel 32 library
+
+				;----------------------------------------------------------
+				; Constant Definitions
+				;----------------------------------------------------------
+
+ =-0000000A			STD_INPUT  equ -10d                     ;Function number for keyboard input
+ =-0000000B			STD_OUTPUT equ -11d                     ;Function number for monitor output
+
+ = 0000000A			LF equ 10d                              ;Line feed ascii constant
+ = 0000000D			CR equ 13d                              ;Carriage return constant
+ = CR,LF			NEWLINE equ CR,LF                       ;Combine CR and LF for carriage return
+
+ = 00000001			ENABLE_PROCESSED_INPUT  equ 1           ;Flag to turn off line buffering
+ = 00000001			ENABLE_PROCESSED_OUTPUT equ 1           ;Flag to turn off line bufferin
+ = 00000003			ENABLE_LINE_WRAP        equ 3           ;Flag to trun line wrap on
+ = 00000007			DISABLE_PROCESSED_INPUT equ 7           ;Flag to turn on line buffering
+
+				;----------------------------------------------------------
+				; prototype Declarations for libarary imports
+				;----------------------------------------------------------
+
+				ExitProcess proto,
+				    dwExitCode:dword				   ;The exit code for the process 
+
+				GetStdHandle proto, 
+					nStdHandle: dword                  ;The standard device. -10=INPUT, -11=OUTPUT, -13=ERROR
+
+				SetConsoleMode proto,                  
+				    hConsoleHandle:dword,              ;A handle to the console input buffer or a console screen buffer
+					dwMode:dword                       ;The input or output mode to be set. 
+
+				ReadFile proto,	
+				    hFile:dword,                       ;A handle to the device
+					lpBuffer:near32,                   ;A pointer to the buffer that receives the data read 
+				    nNumberOfCharsToRead:dword,        ;The maximum number of bytes to be read.
+				    lpNumberOfbytesRead:near32,        ;A pointer to the variable that receives the number of bytes read
+				    lpOverlapped:near32                ;A pointer to an OVERLAPPED structure is required if the hFile parameter 
+					                                   ;was opened with FILE_FLAG_OVERLAPPED, otherwise it can be NULL.
+
+				WriteFile proto,                  
+				    hFile:dword, lpBuffer:near32,      ;A handle to the device
+				    nNumberOfCharsToWrite:dword,       ;The maximum number of bytes to be written.
+				    lpNumberOfbytesWritten:near32,     ;A pointer to the variable that receives the number of bytes written
+				    lpOverlapped:near32                ;A pointer to an OVERLAPPED structure is required if the hFile parameter 
+					                                   ;was opened with FILE_FLAG_OVERLAPPED, otherwise it can be NULL.
+
+
+				;----------------------------------------------------------
+				; Data Segment -- Global Variables
+				;----------------------------------------------------------
+ 00000000			.data
+ 00000000 00000000			strAddr			dd		?
+ 00000004 00000000			strLength		dd		?
+ 00000008 00000000			hStdOut			dd		?
+ 0000000C 00000000			hStdIn			dd		?
+ 00000010 00000000			read			dd		?
+ 00000014 00000000			written			dd		?	
+ 00000018 00000000			currChar		dd		?						; Current character in process
+ 0000001C 00				convertedValue	byte	?						; Result of various functions
+ 0000001D  00000008 [			convValue		db		8 dup(?)				; Buffer for string to various things.
+	    00
+	   ]
+ 00000025 30 31 32 33 34		HexChars		db		"0123456789ABCDEF",0	; Reference table for hexadecimal ASCII
+	   35 36 37 38 39
+	   41 42 43 44 45
+	   46 00
+					;------------------------------------------------------
+					; Main Menu Variables
+					;------------------------------------------------------
+ 00000036 41 73 73 69 67		MenuPrompt		db		"Assignment 2:SKAMAR",NEWLINE,	; Main Menu Prompt
+	   6E 6D 65 6E 74
+	   20 32 3A 53 4B
+	   41 4D 41 52 0D
+	   0A 31 29 20 4C
+	   6F 61 64 20 64
+	   61 74 61 20 66
+	   69 6C 65 0D 0A
+	   32 29 20 53 65
+	   61 72 63 68 20
+	   66 6F 72 20 62
+	   69 74 20 73 65
+	   71 75 65 6E 63
+	   65 0D 0A 33 29
+	   20 45 78 69 74
+	   0D 0A 3A 3A 3E
+	   20 00
+											"1) Load data file",NEWLINE,
+											"2) Search for bit sequence",
+											NEWLINE,"3) Exit",NEWLINE,"::> ",0
+ 00000088 46 69 6C 65 6E		FilenamePrompt	db		"Filename: ",0			; Prompt for filename entry
+	   61 6D 65 3A 20
+	   00
+ 00000093  00000004 [			MMChoice		db		4 dup(?)				; Holds user's choice
+	    00
+	   ]
+ 00000097 20 62 79 74 65		LoadedInfo		db		" bytes loaded",0		; Display number of bytes loaded.
+	   73 20 6C 6F 61
+	   64 65 64 00
+					;------------------------------------------------------
+					; File IO Variables
+					;------------------------------------------------------
+ 000000A5 00000000			hFileIn			dd		?						; Handle to read file in with
+ 000000A9  000000FF [			inFilepath		db		255 dup(?)				; File path to read (from user)
+	    00
+	   ]
+ 000001A8 43 3A 5C 55 73		inFileName		db		"C:\Users\Shane Kamar\Documents\Assembly Assignments\asm2\test\test.txt",0 ; Filename to read (static for now)
+	   65 72 73 5C 53
+	   68 61 6E 65 20
+	   4B 61 6D 61 72
+	   5C 44 6F 63 75
+	   6D 65 6E 74 73
+	   5C 41 73 73 65
+	   6D 62 6C 79 20
+	   41 73 73 69 67
+	   6E 6D 65 6E 74
+	   73 5C 61 73 6D
+	   32 5C 74 65 73
+	   74 5C 74 65 73
+	   74 2E 74 78 74
+	   00
+ 000001EF 00000002			inRights		dd		2d						; Access rights to file. Set to read.
+ 000001F3 00000000			inShareMode		dd		0						; Share Mode (windows IO API): Set to 0 (blocks others)
+ 000001F7 00000004			inCrDisposition	dd		4d						; Creation mode for file (set to OPEN_EXISITING)
+
+				;----------------------------------------------------------
+				; Code Segment
+				;----------------------------------------------------------
+ 00000000			.code
+ 00000000			main proc
+
+ 00000000  33 C0						xor eax, eax					; Clear out EAX
+ 00000002  33 DB						xor ebx, ebx					; Clear out EBX
+ 00000004  33 C9						xor ecx, ecx					; Clear out ECX
+ 00000006  33 D2						xor edx, edx					; Clear out EDX
+								; ----- Starting Number Input -----
+ 00000008  8D 35 00000036 R					lea esi, MenuPrompt 			; Load address of Main Menu Prompt
+ 0000000E  E8 000000DF						call PrintString				; Display main menu
+ 00000013  8D 35 00000093 R					lea	esi, MMChoice				; Load the address to hold the starting number
+ 00000019  E8 00000121						call GetString					; Get Starting number
+ 0000001E  8D 35 00000093 R					lea esi, MMChoice
+ 00000024  E8 00000052						call StrToDecimal				; Convert input to number
+								; ----- Ending Number Input -----
+								
+ 00000029  B0 00						mov al, 0
+								
+					invoke ExitProcess, 0			
+ 00000032			main endp
+
+
+
+ 00000032			DecToIntStr proc
+ 00000032  55						push	ebp					; Save base pointer
+ 00000033  8B EC					mov		ebp, esp			; Extablish stack frame
+ 00000035  66| 8B 45 08					mov		ax, [ebp+8]			; Move number into AX
+ 00000039  51						push	ecx					; Save the CX counter
+ 0000003A  60						pushad
+ 0000003B  9C						pushfd
+ 0000003C  B9 00000002					mov		ecx, 2				; Counting backward, most num digits = 3	
+ 00000041  C6 46 03 00					mov		byte ptr[esi+3], 0	; Null Terminator
+ 00000045  66| 83 F8 64					cmp		ax, 100d			; If number is less than 100,
+ 00000049  7C 02					jl		PadOneZero			; add a zero to the start.
+ 0000004B  EB 0F					jmp		StartSTIConv		; Continue to conversion loop
+ 0000004D  C6 06 30		PadOneZero: mov		byte ptr[esi], 48d	; Add padding
+ 00000050  66| 83 F8 0A					cmp		ax, 10d				; If less than 10, add another zero
+ 00000054  7C 02					jl		PadAnotherZero		
+ 00000056  EB 04					jmp		StartSTIConv
+ 00000058			PadAnotherZero:
+ 00000058  C6 46 01 30					mov		byte ptr [esi+1],48d; Add another zero padding
+ 0000005C			StartSTIConv:							; If there's more digits...
+ 0000005C  33 D2					xor		edx, edx			; Clear out EDX so DIV won't throw a fit
+ 0000005E  BB 0000000A					mov		ebx, 10d			; Prepeare to divide by ten.
+ 00000063  F7 F3					div		ebx					; Divide EBX by ten
+ 00000065  66| 83 C2 30					add		dx, 48d				; Add 30 to the remainder to get resulting ASCII
+ 00000069  88 14 31					mov		[esi+ecx], dl		; Add the character to the string
+ 0000006C  49						dec		ecx					; Descrement the counter
+ 0000006D  66| 83 F8 00					cmp		ax, 0				; If there is no quotient, we have
+ 00000071  74 02					je		EndSTIConv			; reached the end so exit loop.
+ 00000073  EB E7					jmp		StartSTIConv
+ 00000075			EndSTIConv:
+ 00000075  90						nop
+ 00000076  9D						popfd
+ 00000077  61						popad
+ 00000078  59						pop		ecx
+ 00000079  5D						pop		ebp
+ 0000007A  C3						ret
+ 0000007B			DecToIntStr endp
+
+ 0000007B			StrToDecimal proc
+ 0000007B  60						pushad
+ 0000007C  9C						pushfd
+ 0000007D  33 C0					xor eax, eax
+ 0000007F  33 DB					xor ebx, ebx
+ 00000081  33 C9					xor ecx, ecx
+ 00000083  33 D2					xor edx, edx
+							
+ 00000085  B1 00					mov cl, 0					; Set the counter to zero
+ 00000087			LoopIn:		
+ 00000087  80 3E 00					cmp byte ptr [esi], 0		; Check to see if we've reached the end of the string
+ 0000008A  74 1A					je	EndLoopIn				; If we have (i.e., '\0'), then jump to EndLoopIn
+ 0000008C  B7 00					mov bh, 0					; Set high bx register to 0
+ 0000008E  8A D9					mov bl, cl					; Set low bx register to counter so we can address array
+ 00000090  B4 00					mov ah, 0					; CLear high AX register
+ 00000092  B0 0A					mov al, 10d					; Load 10 into al as multiplier
+ 00000094  F7 E2					mul edx						; Multiply current result by 10
+ 00000096  8B D0					mov edx, eax
+ 00000098  8A 06					mov al, byte ptr [esi]	; Move the next character into dl
+ 0000009A  2C 30					sub al, 48d					; Subtract 48 from the ASCII char to get the integer
+ 0000009C  03 C2					add eax, edx
+ 0000009E  8B D0					mov edx, eax
+ 000000A0  80 C1 01					add cl, 1					; Increment counter
+ 000000A3  46						inc esi						; Increment the string pointer
+ 000000A4  EB E1					jmp LoopIn					; Jump to loop start
+ 000000A6			EndLoopIn:	
+ 000000A6  88 15 0000001C R				mov convertedValue, dl
+ 000000AC  9D						popfd
+ 000000AD  61						popad
+ 000000AE  C3						ret
+ 000000AF			StrToDecimal endp
+
+ 000000AF			DecToHexStr proc
+ 000000AF  55						push	ebp					; Save base pointer
+ 000000B0  8B EC					mov		ebp, esp			; Extablish stack freame
+ 000000B2  66| 8B 44 24					mov		ax, [esp+8]			; Move number into AX
+	   08
+ 000000B7  60						pushad
+ 000000B8  9C						pushfd
+ 000000B9  66| 8B D8					mov		bx, ax				; Copy number into bx, so we can 
+ 000000BC  66| C1 EB 04					shr		bx, 4				; shift the lower nibble out
+ 000000C0  66| C1 E3 08					shl		bx,	8				; Shift BX "bacK" so that the higher nibble -> BH
+ 000000C4  66| 8B D0					mov		dx, ax				; Copy number into dx,
+ 000000C7  80 E2 0F					and		dl, 15d				; and get the lower nibble
+ 000000CA  66| 33 D3					xor		dx, bx				; and then recombine the two
+ 000000CD  B7 00					mov		bh, 0				; Zero-out lower bx register for index use
+ 000000CF  8A DA					mov		bl, dl				; Copy destination index into BX register
+ 000000D1  50						push	eax					; Save the state of the AX register
+ 000000D2  B4 00					mov		ah, 0				; Preparing to copy first character
+ 000000D4  8A 83 00000025 R				mov		al, HexChars[bx]	; Fetch the corresponding hex character
+ 000000DA  88 46 01					mov		byte ptr[esi+1], al	; Copy first character into memory
+ 000000DD  B7 00					mov		bh, 0
+ 000000DF  8A DE					mov		bl, dh				; About to get "higher" character
+ 000000E1  8A 83 00000025 R				mov		al, HexChars[bx]
+ 000000E7  88 06					mov		byte ptr[esi], al	; Copy second character to memory
+ 000000E9  C6 46 02 00					mov		byte ptr[esi+2], 0	; Copy null terminator to the string.
+ 000000ED  58						pop		eax
+ 000000EE  9D						popfd
+ 000000EF  61						popad
+ 000000F0  5D						pop		ebp
+ 000000F1  C3						ret
+ 000000F2			DecToHexStr endp
+
+
+
+
+
+				;------------------------------------------------------------------------------
+				; Procedure to print a string to stdout
+				;
+				; Given   :  The Address of Null (0) terminated String to print in ESI register
+				; process :  Print the String using the kernel32.lib WriteFile to
+				;         :  Standard_Output function call.  No registers are changed and the
+				;         :  flags are not affected.
+				; Return  :  Nothing
+				;------------------------------------------------------------------------------
+ 000000F2			PrintString proc                       ; Define procedure
+ 000000F2  60			            pushad                     ; save registers
+ 000000F3  9C			            pushfd                     ; save flags
+ 000000F4  89 35 00000000 R	            mov    strAddr, esi        ; copy string address
+				                                       ; find string length
+ 000000FA  C7 05 00000004 R	            mov    strLength, 0        ; initialize string length
+	   00000000
+ 00000104  80 3E 00		WhileChar:  cmp    byte ptr [esi], 0   ; character = null?
+ 00000107  74 09		            jz     EndWhileChar        ; exit if so
+ 00000109  FF 05 00000004 R	            inc    strLength           ; increment character count
+ 0000010F  46			            inc    esi                 ; point at next character
+ 00000110  EB F2		            jmp    WhileChar           ; while more characters exist
+ 00000112			EndWhileChar:
+				            invoke GetStdHandle,STD_OUTPUT ; get handle for console output
+ 00000119  A3 00000008 R	            mov    hStdOut, eax        ; copy file handle for screen
+				            invoke WriteFile,          ; invoke standard WriteFile with
+				              hStdOut,                 ;   file handle for screen
+				              strAddr,                 ;   address of string
+				              strLength,               ;   length of string
+				              near32 ptr written,      ;   variable for # bytes written
+				              0                        ;   overlapped mode
+ 0000013C  9D			            popfd                      ; restore flags
+ 0000013D  61			            popad                      ; restore registers
+ 0000013E  C3			            ret                        ; return to caller
+ 0000013F			PrintString endp
+
+
+				;------------------------------------------------------------------------------
+				; Procedure to get a string from stdin
+				;
+				; Given   :  The Address of the String to fill in ESI register
+				; process :  Input the String using the kernel32.lib ReadFile from the
+				;         :  Standard_Input function call.  No registers are changed and the
+				;         :  flags are not affected.
+				; Return  :  The input string in the data segment
+				;------------------------------------------------------------------------------
+ 0000013F			GetString proc                         ; Define procedure
+ 0000013F  60			            pushad                     ; save all registers
+ 00000140  9C			            pushfd                     ; save flags
+
+				            invoke GetStdHandle,STD_INPUT  ; get handle for console
+ 00000148  A3 0000000C R	            mov    hStdIn, eax         ; save the handle
+				            invoke SetConsoleMode,     ; invoke standard console with
+				              hStdIn,                  ;   file handle for keyboard
+				              DISABLE_PROCESSED_INPUT  ;   turn line buffering on
+
+ 0000015A  B9 000000FF		            mov    ecx, 255d;MAXSTR    ; string length
+ 0000015F  89 0D 00000004 R	            mov    strLength, ecx      ; maximum string to accept
+ 00000165  89 35 00000000 R	            mov    strAddr, esi        ; save pointer to input string
+				            invoke ReadFile,           ; invoke standard ReadFile with
+				              hStdIn,                  ;   file handle for keyboard
+				              strAddr,                 ;   address of string
+				              strLength,               ;   length of string
+				              near32 ptr read,         ;   variable for # bytes read
+				              0                        ;   overlapped mode
+ 00000189  8B 0D 00000010 R	            mov ecx, read              ; number of bytes read
+ 0000018F  C6 44 31 FE 00	            mov byte ptr [esi+ecx-2],0 ; replace CR/LF by trailing null
+
+ 00000194  9D			            popfd                      ; restore flags
+ 00000195  61			            popad                      ; restore registers
+ 00000196  C3			            ret                        ; return to caller
+ 00000197			GetString   endp
+
+
+				end  ; end directive to compiler
+Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 21:41:19
+firstproj.as						     Symbols 2 - 1
+
+
+
+
+Segments and Groups:
+
+                N a m e                 Size     Length   Align   Combine Class
+
+FLAT . . . . . . . . . . . . . .	GROUP
+STACK  . . . . . . . . . . . . .	32 Bit	 00002000 Para	  Stack	  'STACK'	 
+_DATA  . . . . . . . . . . . . .	32 Bit	 000001FB Para	  Public  'DATA'	
+_TEXT  . . . . . . . . . . . . .	32 Bit	 00000197 Para	  Public  'CODE'	
+
+
+Procedures, parameters, and locals:
+
+                N a m e                 Type     Value    Attr
+
+DecToHexStr  . . . . . . . . . .	P Near	 000000AF _TEXT	Length= 00000043 Public STDCALL
+DecToIntStr  . . . . . . . . . .	P Near	 00000032 _TEXT	Length= 00000049 Public STDCALL
+  PadOneZero . . . . . . . . . .	L Near	 0000004D _TEXT	
+  PadAnotherZero . . . . . . . .	L Near	 00000058 _TEXT	
+  StartSTIConv . . . . . . . . .	L Near	 0000005C _TEXT	
+  EndSTIConv . . . . . . . . . .	L Near	 00000075 _TEXT	
+ExitProcess  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetStdHandle . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetString  . . . . . . . . . . .	P Near	 0000013F _TEXT	Length= 00000058 Public STDCALL
+PrintString  . . . . . . . . . .	P Near	 000000F2 _TEXT	Length= 0000004D Public STDCALL
+  WhileChar  . . . . . . . . . .	L Near	 00000104 _TEXT	
+  EndWhileChar . . . . . . . . .	L Near	 00000112 _TEXT	
+ReadFile . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleMode . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+StrToDecimal . . . . . . . . . .	P Near	 0000007B _TEXT	Length= 00000034 Public STDCALL
+  LoopIn . . . . . . . . . . . .	L Near	 00000087 _TEXT	
+  EndLoopIn  . . . . . . . . . .	L Near	 000000A6 _TEXT	
+WriteFile  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+main . . . . . . . . . . . . . .	P Near	 00000000 _TEXT	Length= 00000032 Public STDCALL
+
+
+Symbols:
+
+                N a m e                 Type     Value    Attr
+
+@CodeSize  . . . . . . . . . . .	Number	 00000000h   
+@DataSize  . . . . . . . . . . .	Number	 00000000h   
+@Interface . . . . . . . . . . .	Number	 00000003h   
+@Model . . . . . . . . . . . . .	Number	 00000007h   
+@code  . . . . . . . . . . . . .	Text   	 _TEXT
+@data  . . . . . . . . . . . . .	Text   	 FLAT
+@fardata?  . . . . . . . . . . .	Text   	 FLAT
+@fardata . . . . . . . . . . . .	Text   	 FLAT
+@stack . . . . . . . . . . . . .	Text   	 FLAT
+CR . . . . . . . . . . . . . . .	Number	 0000000Dh   
+DISABLE_PROCESSED_INPUT  . . . .	Number	 00000007h   
+ENABLE_LINE_WRAP . . . . . . . .	Number	 00000003h   
+ENABLE_PROCESSED_INPUT . . . . .	Number	 00000001h   
+ENABLE_PROCESSED_OUTPUT  . . . .	Number	 00000001h   
+FilenamePrompt . . . . . . . . .	Byte	 00000088 _DATA	
+HexChars . . . . . . . . . . . .	Byte	 00000025 _DATA	
+LF . . . . . . . . . . . . . . .	Number	 0000000Ah   
+LoadedInfo . . . . . . . . . . .	Byte	 00000097 _DATA	
+MMChoice . . . . . . . . . . . .	Byte	 00000093 _DATA	
+MenuPrompt . . . . . . . . . . .	Byte	 00000036 _DATA	
+NEWLINE  . . . . . . . . . . . .	Text   	 CR,LF
+STD_INPUT  . . . . . . . . . . .	Number	 -0000000Ah   
+STD_OUTPUT . . . . . . . . . . .	Number	 -0000000Bh   
+convValue  . . . . . . . . . . .	Byte	 0000001D _DATA	
+convertedValue . . . . . . . . .	Byte	 0000001C _DATA	
+currChar . . . . . . . . . . . .	DWord	 00000018 _DATA	
+hFileIn  . . . . . . . . . . . .	DWord	 000000A5 _DATA	
+hStdIn . . . . . . . . . . . . .	DWord	 0000000C _DATA	
+hStdOut  . . . . . . . . . . . .	DWord	 00000008 _DATA	
+inCrDisposition  . . . . . . . .	DWord	 000001F7 _DATA	
+inFileName . . . . . . . . . . .	Byte	 000001A8 _DATA	
+inFilepath . . . . . . . . . . .	Byte	 000000A9 _DATA	
+inRights . . . . . . . . . . . .	DWord	 000001EF _DATA	
+inShareMode  . . . . . . . . . .	DWord	 000001F3 _DATA	
+read . . . . . . . . . . . . . .	DWord	 00000010 _DATA	
+strAddr  . . . . . . . . . . . .	DWord	 00000000 _DATA	
+strLength  . . . . . . . . . . .	DWord	 00000004 _DATA	
+written  . . . . . . . . . . . .	DWord	 00000014 _DATA	
+
+	   0 Warnings
+	   0 Errors

@@ -1,0 +1,231 @@
+Microsoft (R) Macro Assembler Version 11.00.50727.1	    02/09/13 17:10:43
+test.as						     Page 1 - 1
+
+
+				title test.asm							;DOS file name of program
+
+				.586                                    ;enable all pentium instructions
+				.model flat, stdcall                    ;memory model & calling convention
+				.stack 8192                             ;allocate 8k for stack
+
+				INCLUDELIB kernel32.lib                 ;Include the kernel 32 library
+
+				;----------------------------------------------------------
+				; Constant Definitions
+				;----------------------------------------------------------
+
+ =-0000000A			STD_INPUT  equ -10d                     ;Function number for keyboard input
+ =-0000000B			STD_OUTPUT equ -11d                     ;Function number for monitor output
+
+ = 0000000A			LF equ 10d                              ;Line feed ascii constant
+ = 0000000D			CR equ 13d                              ;Carriage return constant
+ = CR,LF			NEWLINE equ CR,LF                       ;Combine CR and LF for carriage return
+
+ = 00000001			ENABLE_PROCESSED_INPUT  equ 1           ;Flag to turn off line buffering
+ = 00000001			ENABLE_PROCESSED_OUTPUT equ 1           ;Flag to turn off line bufferin
+ = 00000003			ENABLE_LINE_WRAP        equ 3           ;Flag to trun line wrap on
+ = 00000007			DISABLE_PROCESSED_INPUT equ 7           ;Flag to turn on line buffering
+
+				;----------------------------------------------------------
+				; prototype Declarations for libarary imports
+				;----------------------------------------------------------
+
+				ExitProcess proto,
+				    dwExitCode:dword				   ;The exit code for the process 
+
+				GetStdHandle proto, 
+					nStdHandle: dword                  ;The standard device. -10=INPUT, -11=OUTPUT, -13=ERROR
+
+				SetConsoleMode proto,                  
+				    hConsoleHandle:dword,              ;A handle to the console input buffer or a console screen buffer
+					dwMode:dword                       ;The input or output mode to be set. 
+
+				ReadFile proto,	
+				    hFile:dword,                       ;A handle to the device
+					lpBuffer:near32,                   ;A pointer to the buffer that receives the data read 
+				    nNumberOfCharsToRead:dword,        ;The maximum number of bytes to be read.
+				    lpNumberOfbytesRead:near32,        ;A pointer to the variable that receives the number of bytes read
+				    lpOverlapped:near32                ;A pointer to an OVERLAPPED structure is required if the hFile parameter 
+					                                   ;was opened with FILE_FLAG_OVERLAPPED, otherwise it can be NULL.
+
+				WriteFile proto,                  
+				    hFile:dword, lpBuffer:near32,      ;A handle to the device
+				    nNumberOfCharsToWrite:dword,       ;The maximum number of bytes to be written.
+				    lpNumberOfbytesWritten:near32,     ;A pointer to the variable that receives the number of bytes written
+				    lpOverlapped:near32                ;A pointer to an OVERLAPPED structure is required if the hFile parameter 
+					                                   ;was opened with FILE_FLAG_OVERLAPPED, otherwise it can be NULL.
+
+
+				;----------------------------------------------------------
+				; Data Segment -- Global Variables
+				;----------------------------------------------------------
+ 00000000			.data
+ 00000000 00000000			strAddr			dd  ?
+ 00000004 00000000			strLength		dd  ?
+ 00000008 00000000			hStdOut			dd  ?
+ 0000000C 00000000			hStdIn			dd  ?
+ 00000010 00000000			read			dd  ?
+ 00000014 00000000			written			dd  ?	
+
+ 00000018 48 65 6C 6C 6F	    outputStr db "Hello World",NEWLINE,0
+	   20 57 6F 72 6C
+	   64 0D 0A 00
+ 00000026 44454144			variable DWORD 44454144h, 42454546h;   ; 44=D 45=E 41=A 44=D; 42=B 45=E 45=E 46=F
+	   42454546
+
+				;----------------------------------------------------------
+				; Code Segment
+				;----------------------------------------------------------
+ 00000000			.code
+ 00000000			main proc
+
+ 00000000  33 C0		   xor eax, eax
+ 00000002  33 DB		   xor ebx, ebx
+ 00000004  33 C9		   xor ecx, ecx
+ 00000006  33 D2		   xor edx, edx
+
+ 00000008  8D 35 00000018 R	   lea esi, outputStr
+ 0000000E  E8 00000007		   call PrintString
+				   
+				   invoke ExitProcess, 0			
+ 0000001A			main endp
+
+				;------------------------------------------------------------------------------
+				; Procedure to print a string to stdout
+				;
+				; Given   :  The Address of Null (0) terminated String to print in ESI register
+				; process :  Print the String using the kernel32.lib WriteFile to
+				;         :  Standard_Output function call.  No registers are changed and the
+				;         :  flags are not affected.
+				; Return  :  Nothing
+				;------------------------------------------------------------------------------
+ 0000001A			PrintString proc                       ; Define procedure
+ 0000001A  60			            pushad                     ; save registers
+ 0000001B  9C			            pushfd                     ; save flags
+ 0000001C  89 35 00000000 R	            mov    strAddr, esi        ; copy string address
+				                                       ; find string length
+ 00000022  C7 05 00000004 R	            mov    strLength, 0        ; initialize string length
+	   00000000
+ 0000002C  80 3E 00		WhileChar:  cmp    byte ptr [esi], 0   ; character = null?
+ 0000002F  74 09		            jz     EndWhileChar        ; exit if so
+ 00000031  FF 05 00000004 R	            inc    strLength           ; increment character count
+ 00000037  46			            inc    esi                 ; point at next character
+ 00000038  EB F2		            jmp    WhileChar           ; while more characters exist
+ 0000003A			EndWhileChar:
+				            invoke GetStdHandle,STD_OUTPUT ; get handle for console output
+ 00000041  A3 00000008 R	            mov    hStdOut, eax        ; copy file handle for screen
+				            invoke WriteFile,          ; invoke standard WriteFile with
+				              hStdOut,                 ;   file handle for screen
+				              strAddr,                 ;   address of string
+				              strLength,               ;   length of string
+				              near32 ptr written,      ;   variable for # bytes written
+				              0                        ;   overlapped mode
+ 00000064  9D			            popfd                      ; restore flags
+ 00000065  61			            popad                      ; restore registers
+ 00000066  C3			            ret                        ; return to caller
+ 00000067			PrintString endp
+
+
+				;------------------------------------------------------------------------------
+				; Procedure to get a string from stdin
+				;
+				; Given   :  The Address of the String to fill in ESI register
+				; process :  Input the String using the kernel32.lib ReadFile from the
+				;         :  Standard_Input function call.  No registers are changed and the
+				;         :  flags are not affected.
+				; Return  :  The input string in the data segment
+				;------------------------------------------------------------------------------
+ 00000067			GetString proc                         ; Define procedure
+ 00000067  60			            pushad                     ; save all registers
+ 00000068  9C			            pushfd                     ; save flags
+
+				            invoke GetStdHandle,STD_INPUT  ; get handle for console
+ 00000070  A3 0000000C R	            mov    hStdIn, eax         ; save the handle
+				            invoke SetConsoleMode,     ; invoke standard console with
+				              hStdIn,                  ;   file handle for keyboard
+				              DISABLE_PROCESSED_INPUT  ;   turn line buffering on
+
+ 00000082  B9 000000FF		            mov    ecx, 255d;MAXSTR    ; string length
+ 00000087  89 0D 00000004 R	            mov    strLength, ecx      ; maximum string to accept
+ 0000008D  89 35 00000000 R	            mov    strAddr, esi        ; save pointer to input string
+				            invoke ReadFile,           ; invoke standard ReadFile with
+				              hStdIn,                  ;   file handle for keyboard
+				              strAddr,                 ;   address of string
+				              strLength,               ;   length of string
+				              near32 ptr read,         ;   variable for # bytes read
+				              0                        ;   overlapped mode
+ 000000B1  8B 0D 00000010 R	            mov ecx, read              ; number of bytes read
+ 000000B7  C6 44 31 FE 00	            mov byte ptr [esi+ecx-2],0 ; replace CR/LF by trailing null
+
+ 000000BC  9D			            popfd                      ; restore flags
+ 000000BD  61			            popad                      ; restore registers
+ 000000BE  C3			            ret                        ; return to caller
+ 000000BF			GetString   endp
+
+
+				end  ; end directive to compiler
+Microsoft (R) Macro Assembler Version 11.00.50727.1	    02/09/13 17:10:43
+test.as						     Symbols 2 - 1
+
+
+
+
+Segments and Groups:
+
+                N a m e                 Size     Length   Align   Combine Class
+
+FLAT . . . . . . . . . . . . . .	GROUP
+STACK  . . . . . . . . . . . . .	32 Bit	 00002000 Para	  Stack	  'STACK'	 
+_DATA  . . . . . . . . . . . . .	32 Bit	 0000002E Para	  Public  'DATA'	
+_TEXT  . . . . . . . . . . . . .	32 Bit	 000000BF Para	  Public  'CODE'	
+
+
+Procedures, parameters, and locals:
+
+                N a m e                 Type     Value    Attr
+
+ExitProcess  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetStdHandle . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetString  . . . . . . . . . . .	P Near	 00000067 _TEXT	Length= 00000058 Public STDCALL
+PrintString  . . . . . . . . . .	P Near	 0000001A _TEXT	Length= 0000004D Public STDCALL
+  WhileChar  . . . . . . . . . .	L Near	 0000002C _TEXT	
+  EndWhileChar . . . . . . . . .	L Near	 0000003A _TEXT	
+ReadFile . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleMode . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteFile  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+main . . . . . . . . . . . . . .	P Near	 00000000 _TEXT	Length= 0000001A Public STDCALL
+
+
+Symbols:
+
+                N a m e                 Type     Value    Attr
+
+@CodeSize  . . . . . . . . . . .	Number	 00000000h   
+@DataSize  . . . . . . . . . . .	Number	 00000000h   
+@Interface . . . . . . . . . . .	Number	 00000003h   
+@Model . . . . . . . . . . . . .	Number	 00000007h   
+@code  . . . . . . . . . . . . .	Text   	 _TEXT
+@data  . . . . . . . . . . . . .	Text   	 FLAT
+@fardata?  . . . . . . . . . . .	Text   	 FLAT
+@fardata . . . . . . . . . . . .	Text   	 FLAT
+@stack . . . . . . . . . . . . .	Text   	 FLAT
+CR . . . . . . . . . . . . . . .	Number	 0000000Dh   
+DISABLE_PROCESSED_INPUT  . . . .	Number	 00000007h   
+ENABLE_LINE_WRAP . . . . . . . .	Number	 00000003h   
+ENABLE_PROCESSED_INPUT . . . . .	Number	 00000001h   
+ENABLE_PROCESSED_OUTPUT  . . . .	Number	 00000001h   
+LF . . . . . . . . . . . . . . .	Number	 0000000Ah   
+NEWLINE  . . . . . . . . . . . .	Text   	 CR,LF
+STD_INPUT  . . . . . . . . . . .	Number	 -0000000Ah   
+STD_OUTPUT . . . . . . . . . . .	Number	 -0000000Bh   
+hStdIn . . . . . . . . . . . . .	DWord	 0000000C _DATA	
+hStdOut  . . . . . . . . . . . .	DWord	 00000008 _DATA	
+outputStr  . . . . . . . . . . .	Byte	 00000018 _DATA	
+read . . . . . . . . . . . . . .	DWord	 00000010 _DATA	
+strAddr  . . . . . . . . . . . .	DWord	 00000000 _DATA	
+strLength  . . . . . . . . . . .	DWord	 00000004 _DATA	
+variable . . . . . . . . . . . .	DWord	 00000026 _DATA	
+written  . . . . . . . . . . . .	DWord	 00000014 _DATA	
+
+	   0 Warnings
+	   0 Errors
