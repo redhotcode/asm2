@@ -5,7 +5,7 @@ title firstproj.asm							;DOS file name of program
 .stack 8192                             ;allocate 8k for stack
 
 INCLUDELIB kernel32.lib                 ;Include the kernel 32 library
-INCLUDE    \Masm32\Include\Masm32rt.inc
+INCLUDE \masm32\include\masm32rt.inc		;Include windows functions.
 ;----------------------------------------------------------
 ; Constant Definitions
 ;----------------------------------------------------------
@@ -34,7 +34,11 @@ FILE_SHARE_DELETE equ 4
 
 FILE_ATTRIBUTE_NORMAL equ 80h
 
-HANDLE equ dword
+; Menu Selections (in decimal)
+MENU_EXIT			equ	3
+MENU_ENTER_FILENAME	equ	1
+MENU_ENTER_PATTERN	equ	2
+
 ;----------------------------------------------------------
 ; prototype Declarations for libarary imports
 ;----------------------------------------------------------
@@ -50,51 +54,6 @@ SetConsoleMode proto,
     hConsoleHandle:dword,              ;A handle to the console input buffer or a console screen buffer
 	dwMode:dword                       ;The input or output mode to be set. 
 
-ReadFile proto,	
-    hFile:dword,                       ;A handle to the device
-	lpBuffer:near32,                   ;A pointer to the buffer that receives the data read 
-    nNumberOfCharsToRead:dword,        ;The maximum number of bytes to be read.
-    lpNumberOfbytesRead:near32,        ;A pointer to the variable that receives the number of bytes read
-    lpOverlapped:near32                ;A pointer to an OVERLAPPED structure is required if the hFile parameter 
-	                                   ;was opened with FILE_FLAG_OVERLAPPED, otherwise it can be NULL.
-
-WriteFile proto,                  
-    hFile:dword, lpBuffer:near32,      ;A handle to the device
-    nNumberOfCharsToWrite:dword,       ;The maximum number of bytes to be written.
-    lpNumberOfbytesWritten:near32,     ;A pointer to the variable that receives the number of bytes written
-    lpOverlapped:near32                ;A pointer to an OVERLAPPED structure is required if the hFile parameter 
-	                                   ;was opened with FILE_FLAG_OVERLAPPED, otherwise it can be NULL.
-
-
-CloseHandle proto,                     ;Prototype for closing a file
-    fHandle:dword
-
-GetLastError proto                     ;Prototype for getting specific error
-
-
-CreateFileA proto,                     ;Prototype for CreateFile, used for getting handle to new or existin file
-    lpFileName:near32,
-	dwDesiredAccess:dword,
-	dwShareMode:dword,
-	lpSecurityAttributes:near32,
-	dwCreationDisposition:dword,
-	dwFlagsAndAttributes:dword,
-	hTemplateFile:dword
-
-SetConsoleCursorPosition proto,        ;Prototype for setting cursor position
-	hConsoleOutput:dword,
-	dwCursorPosition:dword
-
-GetConsoleScreenBufferInfo proto,      ;Prototype for getting console info
-	hConsoleOutput:dword,
-	lpConsoleScreenBufferInfo:near32
-
- FillConsoleOutputCharacterA proto,    ;Prototype for filling screen with character (used for clear screen)
-	hConsoleOutput:dword,
-	cCharacter:byte,
-	nLength:dword,
-	dwWriteCoord:dword,
-	lpNumberOfCharsWritten:near32
 
 
 ;----------------------------------------------------------
@@ -116,6 +75,7 @@ GetConsoleScreenBufferInfo proto,      ;Prototype for getting console info
 	convertedValue	byte	?						; Result of various functions
 	convValue		db		8 dup(?)				; Buffer for string to various things.
 	HexChars		db		"0123456789ABCDEF",0	; Reference table for hexadecimal ASCII
+	fErrMsg			db		"File IO Errors have occured",NEWLINE,0  ; Error Message
 	;------------------------------------------------------
 	; Main Menu Variables
 	;------------------------------------------------------
@@ -125,6 +85,7 @@ GetConsoleScreenBufferInfo proto,      ;Prototype for getting console info
 							NEWLINE,"3) Exit",NEWLINE,"::> ",0
 	MMChoice		db		4 dup(?)				; Holds user's choice
 	LoadedInfo		db		" bytes loaded",0		; Display number of bytes loaded.
+	lastError		dd		?						; Holds the error code of the last error
 ;----------------------------------------------------------
 ; Code Segment
 ;----------------------------------------------------------
@@ -144,15 +105,21 @@ MainMenu:
 				lea		esi, MMChoice			; Load address of where choice is held (ASCII)
 				call	StrToDecimal			; Convert input to number
 				mov		dl, convertedValue		; Load converted number into d register
-				cmp		dl, 3d					; Check to see if we exit
+				cmp		dl, MENU_EXIT			; Check to see if we exit
 				je		TotsFinished			; Jump To Exit
-				cmp		dl, 1d					; Check to see if user wants to enter filename.	
+				cmp		dl, MENU_ENTER_FILENAME	; Check to see if user wants to enter filename.	
 				jne		BitPatternOpt			; Keep testing if it's not
 				lea		esi, filePrompt			; Prompt for filename
 				call	PrintString				; Display prompt
 				lea		esi, inFilename			; Load address of memory holding filename
-				call	GetString				; Get Filename.
+				call	GetString				; Get Filename and store in inFilename
+				lea		esi, fdata				; Load address of file buffer into stack pointer
 				call	ReadFileContents		; Read contents of file into buffer
+		.IF lastError==ERROR_SUCCESS			; If no File IO errors occurred
+				
+		.ELSE
+				
+		.ENDIF
 BitPatternOpt:
 				mov		al, 2
 ContTest:
@@ -163,7 +130,7 @@ TotsFinished:
 main endp
 
 ;------------------------------------------------------------------------------
-; Procedure to print a string to stdout
+; Gets the filename, validates, and reads the contents of the file.
 ;
 ; Given   :  The Address of Null (0) terminated String to print in ESI register
 ; process :  Print the String using the kernel32.lib WriteFile to
@@ -357,21 +324,33 @@ ReadFileContents  proc                 ; Define procedure
             pushad                     ; save all registers
             pushfd                     ; save flags
 
-            invoke CreateFileA, near32 ptr inFilename, GENERIC_READ, FILE_SHARE_READ,
+            invoke CreateFileA, OFFSET inFilename, GENERIC_READ, FILE_SHARE_READ,
 			   0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
 
-            mov hFileIn, eax           ; save the handle
-
-            mov ecx, 1024d             ; string length
-            mov strLength, ecx         ; maximum string to accept
-            mov strAddr, esi           ; save pointer to input string
-            invoke ReadFile,           ; invoke standard ReadFile with
-              hFileIn,                 ;   file handle for keyboard
-              strAddr,                 ;   address of string
-              strLength,               ;   length of string
-              near32 ptr read,         ;   variable for # bytes read
-              0                        ;   overlapped mode
-            mov ecx, read              ; number of bytes read
+	.IF eax==INVALID_HANDLE_VALUE		; Check to see if handle is invalid
+			push esi					; Save stack pointer
+			lea esi, fErrMsg			; Prepare to show error
+			call PrintString			; Show error.
+			pop esi						; Restore stack pointer
+			call GetLastError			; Get the error code behind what went wrong
+			mov lastError, eax			; Copy the error code into a variable.
+			mov read, 0					; Zero bytes read.
+	.ELSE
+			mov hFileIn, eax			; save the handle
+            mov ecx, 1024d				; string length
+            mov strLength, ecx			; maximum string to accept
+            mov strAddr, esi			; save pointer to input string
+            invoke ReadFile,			; invoke standard ReadFile with
+              hFileIn,					;   file handle for keyboard
+              strAddr,					;   address of string
+              strLength,				;   length of string
+              near32 ptr read,			;   variable for # bytes read
+              0							;   overlapped mode
+            mov ecx, read				; number of bytes read
+			invoke GetLastError			; Check for reading errors.
+			mov lastError, eax			; Copy result to memory.
+	.ENDIF
+            
 
             popfd                      ; restore flags
             popad                      ; restore registers
