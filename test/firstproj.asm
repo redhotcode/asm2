@@ -5,7 +5,6 @@ title firstproj.asm							;DOS file name of program
 .stack 8192                             ;allocate 8k for stack
 
 INCLUDELIB kernel32.lib                 ;Include the kernel 32 library
-
 ;----------------------------------------------------------
 ; Constant Definitions
 ;----------------------------------------------------------
@@ -22,9 +21,23 @@ ENABLE_PROCESSED_OUTPUT equ 1           ;Flag to turn off line bufferin
 ENABLE_LINE_WRAP        equ 3           ;Flag to trun line wrap on
 DISABLE_PROCESSED_INPUT equ 7           ;Flag to turn on line buffering
 
+CREATE_NEW    EQU  1                    ;Parameter for creating a new file
+CREATE_ALWAYS EQU  2                    ;Always create (overwrite existing)
+OPEN_EXISTING EQU  3                    ;Parameter for opening an existing file
+GENERIC_READ  EQU  80000000h            ;Parameter for reading a file
+GENERIC_WRITE EQU  40000000h            ;Parameter for writing a file
+
+FILE_SHARE_READ   equ 1
+FILE_SHARE_WRITE  equ 2
+FILE_SHARE_DELETE equ 4
+
+FILE_ATTRIBUTE_NORMAL equ 80h
+
+HANDLE equ dword
 ;----------------------------------------------------------
 ; prototype Declarations for libarary imports
 ;----------------------------------------------------------
+
 
 ExitProcess proto,
     dwExitCode:dword				   ;The exit code for the process 
@@ -52,6 +65,37 @@ WriteFile proto,
 	                                   ;was opened with FILE_FLAG_OVERLAPPED, otherwise it can be NULL.
 
 
+CloseHandle proto,                     ;Prototype for closing a file
+    fHandle:dword
+
+GetLastError proto                     ;Prototype for getting specific error
+
+
+CreateFileA proto,                     ;Prototype for CreateFile, used for getting handle to new or existin file
+    lpFileName:near32,
+	dwDesiredAccess:dword,
+	dwShareMode:dword,
+	lpSecurityAttributes:near32,
+	dwCreationDisposition:dword,
+	dwFlagsAndAttributes:dword,
+	hTemplateFile:dword
+
+SetConsoleCursorPosition proto,        ;Prototype for setting cursor position
+	hConsoleOutput:dword,
+	dwCursorPosition:dword
+
+GetConsoleScreenBufferInfo proto,      ;Prototype for getting console info
+	hConsoleOutput:dword,
+	lpConsoleScreenBufferInfo:near32
+
+ FillConsoleOutputCharacterA proto,    ;Prototype for filling screen with character (used for clear screen)
+	hConsoleOutput:dword,
+	cCharacter:byte,
+	nLength:dword,
+	dwWriteCoord:dword,
+	lpNumberOfCharsWritten:near32
+
+
 ;----------------------------------------------------------
 ; Data Segment -- Global Variables
 ;----------------------------------------------------------
@@ -60,8 +104,13 @@ WriteFile proto,
 	strLength		dd		?
 	hStdOut			dd		?
 	hStdIn			dd		?
+	hFileOut        dd		?
+	hFileIn         dd		?
 	read			dd		?
 	written			dd		?	
+	fdata           db		1024 dup(0)
+	inFilename      db		256 dup(0)
+	filePrompt      db		"Enter filename: ",0
 	currChar		dd		?						; Current character in process
 	convertedValue	byte	?						; Result of various functions
 	convValue		db		8 dup(?)				; Buffer for string to various things.
@@ -73,19 +122,8 @@ WriteFile proto,
 							"1) Load data file",NEWLINE,
 							"2) Search for bit sequence",
 							NEWLINE,"3) Exit",NEWLINE,"::> ",0
-	FilenamePrompt	db		"Filename: ",0			; Prompt for filename entry
 	MMChoice		db		4 dup(?)				; Holds user's choice
 	LoadedInfo		db		" bytes loaded",0		; Display number of bytes loaded.
-	;------------------------------------------------------
-	; File IO Variables
-	;------------------------------------------------------
-	hFileIn			dd		?						; Handle to read file in with
-	inFilepath		db		255 dup(?)				; File path to read (from user)
-	inFileName		db		"C:\Users\Shane Kamar\Documents\Assembly Assignments\asm2\test\test.txt",0 ; Filename to read (static for now)
-	inRights		dd		2d						; Access rights to file. Set to read.
-	inShareMode		dd		0						; Share Mode (windows IO API): Set to 0 (blocks others)
-	inCrDisposition	dd		4d						; Creation mode for file (set to OPEN_EXISITING)
-
 ;----------------------------------------------------------
 ; Code Segment
 ;----------------------------------------------------------
@@ -96,15 +134,13 @@ main proc
 				xor ebx, ebx					; Clear out EBX
 				xor ecx, ecx					; Clear out ECX
 				xor edx, edx					; Clear out EDX
-				; ----- Starting Number Input -----
+				; ----- Menu Choice Input -----
 				lea esi, MenuPrompt 			; Load address of Main Menu Prompt
 				call PrintString				; Display main menu
 				lea	esi, MMChoice				; Load the address to hold the starting number
 				call GetString					; Get Starting number
-				lea esi, MMChoice
-				call StrToDecimal				; Convert input to number
-				; ----- Ending Number Input -----
-				
+				lea esi, MMChoice				; Load address of where choice is held (ASCII)
+				call StrToDecimal				; Convert input to number				
 				mov al, 0
 				
 	invoke ExitProcess, 0			
@@ -286,5 +322,33 @@ GetString proc                         ; Define procedure
             ret                        ; return to caller
 GetString   endp
 
+
+;------------------------------------------------------------------------------
+; Procedure to read file (filename in inFilename) into fdata buffer
+;------------------------------------------------------------------------------
+ReadFileContents  proc                 ; Define procedure
+            pushad                     ; save all registers
+            pushfd                     ; save flags
+
+            invoke CreateFileA, near32 ptr inFilename, GENERIC_READ, FILE_SHARE_READ,
+			   0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
+
+            mov hFileIn, eax           ; save the handle
+
+            mov ecx, 1024d             ; string length
+            mov strLength, ecx         ; maximum string to accept
+            mov strAddr, esi           ; save pointer to input string
+            invoke ReadFile,           ; invoke standard ReadFile with
+              hFileIn,                 ;   file handle for keyboard
+              strAddr,                 ;   address of string
+              strLength,               ;   length of string
+              near32 ptr read,         ;   variable for # bytes read
+              0                        ;   overlapped mode
+            mov ecx, read              ; number of bytes read
+
+            popfd                      ; restore flags
+            popad                      ; restore registers
+            ret                        ; return to caller
+ReadFileContents   endp
 
 end  ; end directive to compiler

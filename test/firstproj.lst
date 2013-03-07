@@ -1,4 +1,4 @@
-Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 21:41:19
+Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 22:31:48
 firstproj.as						     Page 1 - 1
 
 
@@ -9,7 +9,6 @@ Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 21:41:19
 				.stack 8192                             ;allocate 8k for stack
 
 				INCLUDELIB kernel32.lib                 ;Include the kernel 32 library
-
 				;----------------------------------------------------------
 				; Constant Definitions
 				;----------------------------------------------------------
@@ -26,9 +25,23 @@ Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 21:41:19
  = 00000003			ENABLE_LINE_WRAP        equ 3           ;Flag to trun line wrap on
  = 00000007			DISABLE_PROCESSED_INPUT equ 7           ;Flag to turn on line buffering
 
+ = 00000001			CREATE_NEW    EQU  1                    ;Parameter for creating a new file
+ = 00000002			CREATE_ALWAYS EQU  2                    ;Always create (overwrite existing)
+ = 00000003			OPEN_EXISTING EQU  3                    ;Parameter for opening an existing file
+ = 80000000			GENERIC_READ  EQU  80000000h            ;Parameter for reading a file
+ = 40000000			GENERIC_WRITE EQU  40000000h            ;Parameter for writing a file
+
+ = 00000001			FILE_SHARE_READ   equ 1
+ = 00000002			FILE_SHARE_WRITE  equ 2
+ = 00000004			FILE_SHARE_DELETE equ 4
+
+ = 00000080			FILE_ATTRIBUTE_NORMAL equ 80h
+
+ = 00000004			HANDLE equ dword
 				;----------------------------------------------------------
 				; prototype Declarations for libarary imports
 				;----------------------------------------------------------
+
 
 				ExitProcess proto,
 				    dwExitCode:dword				   ;The exit code for the process 
@@ -56,6 +69,37 @@ Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 21:41:19
 					                                   ;was opened with FILE_FLAG_OVERLAPPED, otherwise it can be NULL.
 
 
+				CloseHandle proto,                     ;Prototype for closing a file
+				    fHandle:dword
+
+				GetLastError proto                     ;Prototype for getting specific error
+
+
+				CreateFileA proto,                     ;Prototype for CreateFile, used for getting handle to new or existin file
+				    lpFileName:near32,
+					dwDesiredAccess:dword,
+					dwShareMode:dword,
+					lpSecurityAttributes:near32,
+					dwCreationDisposition:dword,
+					dwFlagsAndAttributes:dword,
+					hTemplateFile:dword
+
+				SetConsoleCursorPosition proto,        ;Prototype for setting cursor position
+					hConsoleOutput:dword,
+					dwCursorPosition:dword
+
+				GetConsoleScreenBufferInfo proto,      ;Prototype for getting console info
+					hConsoleOutput:dword,
+					lpConsoleScreenBufferInfo:near32
+
+				 FillConsoleOutputCharacterA proto,    ;Prototype for filling screen with character (used for clear screen)
+					hConsoleOutput:dword,
+					cCharacter:byte,
+					nLength:dword,
+					dwWriteCoord:dword,
+					lpNumberOfCharsWritten:near32
+
+
 				;----------------------------------------------------------
 				; Data Segment -- Global Variables
 				;----------------------------------------------------------
@@ -64,21 +108,31 @@ Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 21:41:19
  00000004 00000000			strLength		dd		?
  00000008 00000000			hStdOut			dd		?
  0000000C 00000000			hStdIn			dd		?
- 00000010 00000000			read			dd		?
- 00000014 00000000			written			dd		?	
- 00000018 00000000			currChar		dd		?						; Current character in process
- 0000001C 00				convertedValue	byte	?						; Result of various functions
- 0000001D  00000008 [			convValue		db		8 dup(?)				; Buffer for string to various things.
+ 00000010 00000000			hFileOut        dd		?
+ 00000014 00000000			hFileIn         dd		?
+ 00000018 00000000			read			dd		?
+ 0000001C 00000000			written			dd		?	
+ 00000020  00000400 [			fdata           db		1024 dup(0)
 	    00
 	   ]
- 00000025 30 31 32 33 34		HexChars		db		"0123456789ABCDEF",0	; Reference table for hexadecimal ASCII
+ 00000420  00000100 [			inFilename      db		256 dup(0)
+	    00
+	   ]
+ 00000520 45 6E 74 65 72		filePrompt      db		"Enter filename: ",0
+	   20 66 69 6C 65
+	   6E 61 6D 65 3A
+	   20 00
+ 00000531 00000000			currChar		dd		?						; Current character in process
+ 00000535 00				convertedValue	byte	?						; Result of various functions
+ 00000536				convValue		db		8 dup(?)				; Buffer for string to various things.
+ 0000053E 30 31 32 33 34		HexChars		db		"0123456789ABCDEF",0	; Reference table for hexadecimal ASCII
 	   35 36 37 38 39
 	   41 42 43 44 45
 	   46 00
 					;------------------------------------------------------
 					; Main Menu Variables
 					;------------------------------------------------------
- 00000036 41 73 73 69 67		MenuPrompt		db		"Assignment 2:SKAMAR",NEWLINE,	; Main Menu Prompt
+ 0000054F 41 73 73 69 67		MenuPrompt		db		"Assignment 2:SKAMAR",NEWLINE,	; Main Menu Prompt
 	   6E 6D 65 6E 74
 	   20 32 3A 53 4B
 	   41 4D 41 52 0D
@@ -98,41 +152,12 @@ Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 21:41:19
 											"1) Load data file",NEWLINE,
 											"2) Search for bit sequence",
 											NEWLINE,"3) Exit",NEWLINE,"::> ",0
- 00000088 46 69 6C 65 6E		FilenamePrompt	db		"Filename: ",0			; Prompt for filename entry
-	   61 6D 65 3A 20
-	   00
- 00000093  00000004 [			MMChoice		db		4 dup(?)				; Holds user's choice
+ 000005A1  00000004 [			MMChoice		db		4 dup(?)				; Holds user's choice
 	    00
 	   ]
- 00000097 20 62 79 74 65		LoadedInfo		db		" bytes loaded",0		; Display number of bytes loaded.
+ 000005A5 20 62 79 74 65		LoadedInfo		db		" bytes loaded",0		; Display number of bytes loaded.
 	   73 20 6C 6F 61
 	   64 65 64 00
-					;------------------------------------------------------
-					; File IO Variables
-					;------------------------------------------------------
- 000000A5 00000000			hFileIn			dd		?						; Handle to read file in with
- 000000A9  000000FF [			inFilepath		db		255 dup(?)				; File path to read (from user)
-	    00
-	   ]
- 000001A8 43 3A 5C 55 73		inFileName		db		"C:\Users\Shane Kamar\Documents\Assembly Assignments\asm2\test\test.txt",0 ; Filename to read (static for now)
-	   65 72 73 5C 53
-	   68 61 6E 65 20
-	   4B 61 6D 61 72
-	   5C 44 6F 63 75
-	   6D 65 6E 74 73
-	   5C 41 73 73 65
-	   6D 62 6C 79 20
-	   41 73 73 69 67
-	   6E 6D 65 6E 74
-	   73 5C 61 73 6D
-	   32 5C 74 65 73
-	   74 5C 74 65 73
-	   74 2E 74 78 74
-	   00
- 000001EF 00000002			inRights		dd		2d						; Access rights to file. Set to read.
- 000001F3 00000000			inShareMode		dd		0						; Share Mode (windows IO API): Set to 0 (blocks others)
- 000001F7 00000004			inCrDisposition	dd		4d						; Creation mode for file (set to OPEN_EXISITING)
-
 				;----------------------------------------------------------
 				; Code Segment
 				;----------------------------------------------------------
@@ -143,15 +168,13 @@ Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 21:41:19
  00000002  33 DB						xor ebx, ebx					; Clear out EBX
  00000004  33 C9						xor ecx, ecx					; Clear out ECX
  00000006  33 D2						xor edx, edx					; Clear out EDX
-								; ----- Starting Number Input -----
- 00000008  8D 35 00000036 R					lea esi, MenuPrompt 			; Load address of Main Menu Prompt
+								; ----- Menu Choice Input -----
+ 00000008  8D 35 0000054F R					lea esi, MenuPrompt 			; Load address of Main Menu Prompt
  0000000E  E8 000000DF						call PrintString				; Display main menu
- 00000013  8D 35 00000093 R					lea	esi, MMChoice				; Load the address to hold the starting number
+ 00000013  8D 35 000005A1 R					lea	esi, MMChoice				; Load the address to hold the starting number
  00000019  E8 00000121						call GetString					; Get Starting number
- 0000001E  8D 35 00000093 R					lea esi, MMChoice
- 00000024  E8 00000052						call StrToDecimal				; Convert input to number
-								; ----- Ending Number Input -----
-								
+ 0000001E  8D 35 000005A1 R					lea esi, MMChoice				; Load address of where choice is held (ASCII)
+ 00000024  E8 00000052						call StrToDecimal				; Convert input to number				
  00000029  B0 00						mov al, 0
 								
 					invoke ExitProcess, 0			
@@ -214,15 +237,15 @@ Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 21:41:19
  00000092  B0 0A					mov al, 10d					; Load 10 into al as multiplier
  00000094  F7 E2					mul edx						; Multiply current result by 10
  00000096  8B D0					mov edx, eax
- 00000098  8A 06					mov al, byte ptr [esi]	; Move the next character into dl
+ 00000098  8A 06					mov al, byte ptr [esi]		; Move the next character into dl
  0000009A  2C 30					sub al, 48d					; Subtract 48 from the ASCII char to get the integer
- 0000009C  03 C2					add eax, edx
- 0000009E  8B D0					mov edx, eax
+ 0000009C  03 C2					add eax, edx				; Add resultant to current number
+ 0000009E  8B D0					mov edx, eax				; Copy current number into D register
  000000A0  80 C1 01					add cl, 1					; Increment counter
  000000A3  46						inc esi						; Increment the string pointer
  000000A4  EB E1					jmp LoopIn					; Jump to loop start
  000000A6			EndLoopIn:	
- 000000A6  88 15 0000001C R				mov convertedValue, dl
+ 000000A6  88 15 00000535 R				mov convertedValue, dl		; Copy from D register to memory
  000000AC  9D						popfd
  000000AD  61						popad
  000000AE  C3						ret
@@ -245,11 +268,11 @@ Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 21:41:19
  000000CF  8A DA					mov		bl, dl				; Copy destination index into BX register
  000000D1  50						push	eax					; Save the state of the AX register
  000000D2  B4 00					mov		ah, 0				; Preparing to copy first character
- 000000D4  8A 83 00000025 R				mov		al, HexChars[bx]	; Fetch the corresponding hex character
+ 000000D4  8A 83 0000053E R				mov		al, HexChars[bx]	; Fetch the corresponding hex character
  000000DA  88 46 01					mov		byte ptr[esi+1], al	; Copy first character into memory
  000000DD  B7 00					mov		bh, 0
  000000DF  8A DE					mov		bl, dh				; About to get "higher" character
- 000000E1  8A 83 00000025 R				mov		al, HexChars[bx]
+ 000000E1  8A 83 0000053E R				mov		al, HexChars[bx]
  000000E7  88 06					mov		byte ptr[esi], al	; Copy second character to memory
  000000E9  C6 46 02 00					mov		byte ptr[esi+2], 0	; Copy null terminator to the string.
  000000ED  58						pop		eax
@@ -327,7 +350,7 @@ Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 21:41:19
 				              strLength,               ;   length of string
 				              near32 ptr read,         ;   variable for # bytes read
 				              0                        ;   overlapped mode
- 00000189  8B 0D 00000010 R	            mov ecx, read              ; number of bytes read
+ 00000189  8B 0D 00000018 R	            mov ecx, read              ; number of bytes read
  0000018F  C6 44 31 FE 00	            mov byte ptr [esi+ecx-2],0 ; replace CR/LF by trailing null
 
  00000194  9D			            popfd                      ; restore flags
@@ -336,8 +359,36 @@ Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 21:41:19
  00000197			GetString   endp
 
 
+				;------------------------------------------------------------------------------
+				; Procedure to read file (filename in inFilename) into fdata buffer
+				;------------------------------------------------------------------------------
+ 00000197			ReadFileContents  proc                 ; Define procedure
+ 00000197  60			            pushad                     ; save all registers
+ 00000198  9C			            pushfd                     ; save flags
+
+				            invoke CreateFileA, near32 ptr inFilename, GENERIC_READ, FILE_SHARE_READ,
+							   0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
+
+ 000001B5  A3 00000014 R	            mov hFileIn, eax           ; save the handle
+
+ 000001BA  B9 00000400		            mov ecx, 1024d             ; string length
+ 000001BF  89 0D 00000004 R	            mov strLength, ecx         ; maximum string to accept
+ 000001C5  89 35 00000000 R	            mov strAddr, esi           ; save pointer to input string
+				            invoke ReadFile,           ; invoke standard ReadFile with
+				              hFileIn,                 ;   file handle for keyboard
+				              strAddr,                 ;   address of string
+				              strLength,               ;   length of string
+				              near32 ptr read,         ;   variable for # bytes read
+				              0                        ;   overlapped mode
+ 000001E9  8B 0D 00000018 R	            mov ecx, read              ; number of bytes read
+
+ 000001EF  9D			            popfd                      ; restore flags
+ 000001F0  61			            popad                      ; restore registers
+ 000001F1  C3			            ret                        ; return to caller
+ 000001F2			ReadFileContents   endp
+
 				end  ; end directive to compiler
-Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 21:41:19
+Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 22:31:48
 firstproj.as						     Symbols 2 - 1
 
 
@@ -349,14 +400,16 @@ Segments and Groups:
 
 FLAT . . . . . . . . . . . . . .	GROUP
 STACK  . . . . . . . . . . . . .	32 Bit	 00002000 Para	  Stack	  'STACK'	 
-_DATA  . . . . . . . . . . . . .	32 Bit	 000001FB Para	  Public  'DATA'	
-_TEXT  . . . . . . . . . . . . .	32 Bit	 00000197 Para	  Public  'CODE'	
+_DATA  . . . . . . . . . . . . .	32 Bit	 000005B3 Para	  Public  'DATA'	
+_TEXT  . . . . . . . . . . . . .	32 Bit	 000001F2 Para	  Public  'CODE'	
 
 
 Procedures, parameters, and locals:
 
                 N a m e                 Type     Value    Attr
 
+CloseHandle  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+CreateFileA  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
 DecToHexStr  . . . . . . . . . .	P Near	 000000AF _TEXT	Length= 00000043 Public STDCALL
 DecToIntStr  . . . . . . . . . .	P Near	 00000032 _TEXT	Length= 00000049 Public STDCALL
   PadOneZero . . . . . . . . . .	L Near	 0000004D _TEXT	
@@ -364,12 +417,17 @@ DecToIntStr  . . . . . . . . . .	P Near	 00000032 _TEXT	Length= 00000049 Public 
   StartSTIConv . . . . . . . . .	L Near	 0000005C _TEXT	
   EndSTIConv . . . . . . . . . .	L Near	 00000075 _TEXT	
 ExitProcess  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+FillConsoleOutputCharacterA  . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetConsoleScreenBufferInfo . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetLastError . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
 GetStdHandle . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
 GetString  . . . . . . . . . . .	P Near	 0000013F _TEXT	Length= 00000058 Public STDCALL
 PrintString  . . . . . . . . . .	P Near	 000000F2 _TEXT	Length= 0000004D Public STDCALL
   WhileChar  . . . . . . . . . .	L Near	 00000104 _TEXT	
   EndWhileChar . . . . . . . . .	L Near	 00000112 _TEXT	
+ReadFileContents . . . . . . . .	P Near	 00000197 _TEXT	Length= 0000005B Public STDCALL
 ReadFile . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleCursorPosition . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
 SetConsoleMode . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
 StrToDecimal . . . . . . . . . .	P Near	 0000007B _TEXT	Length= 00000034 Public STDCALL
   LoopIn . . . . . . . . . . . .	L Near	 00000087 _TEXT	
@@ -391,35 +449,43 @@ Symbols:
 @fardata?  . . . . . . . . . . .	Text   	 FLAT
 @fardata . . . . . . . . . . . .	Text   	 FLAT
 @stack . . . . . . . . . . . . .	Text   	 FLAT
+CREATE_ALWAYS  . . . . . . . . .	Number	 00000002h   
+CREATE_NEW . . . . . . . . . . .	Number	 00000001h   
 CR . . . . . . . . . . . . . . .	Number	 0000000Dh   
 DISABLE_PROCESSED_INPUT  . . . .	Number	 00000007h   
 ENABLE_LINE_WRAP . . . . . . . .	Number	 00000003h   
 ENABLE_PROCESSED_INPUT . . . . .	Number	 00000001h   
 ENABLE_PROCESSED_OUTPUT  . . . .	Number	 00000001h   
-FilenamePrompt . . . . . . . . .	Byte	 00000088 _DATA	
-HexChars . . . . . . . . . . . .	Byte	 00000025 _DATA	
+FILE_ATTRIBUTE_NORMAL  . . . . .	Number	 00000080h   
+FILE_SHARE_DELETE  . . . . . . .	Number	 00000004h   
+FILE_SHARE_READ  . . . . . . . .	Number	 00000001h   
+FILE_SHARE_WRITE . . . . . . . .	Number	 00000002h   
+GENERIC_READ . . . . . . . . . .	Number	 -80000000h   
+GENERIC_WRITE  . . . . . . . . .	Number	 40000000h   
+HANDLE . . . . . . . . . . . . .	Number	 00000004h   
+HexChars . . . . . . . . . . . .	Byte	 0000053E _DATA	
 LF . . . . . . . . . . . . . . .	Number	 0000000Ah   
-LoadedInfo . . . . . . . . . . .	Byte	 00000097 _DATA	
-MMChoice . . . . . . . . . . . .	Byte	 00000093 _DATA	
-MenuPrompt . . . . . . . . . . .	Byte	 00000036 _DATA	
+LoadedInfo . . . . . . . . . . .	Byte	 000005A5 _DATA	
+MMChoice . . . . . . . . . . . .	Byte	 000005A1 _DATA	
+MenuPrompt . . . . . . . . . . .	Byte	 0000054F _DATA	
 NEWLINE  . . . . . . . . . . . .	Text   	 CR,LF
+OPEN_EXISTING  . . . . . . . . .	Number	 00000003h   
 STD_INPUT  . . . . . . . . . . .	Number	 -0000000Ah   
 STD_OUTPUT . . . . . . . . . . .	Number	 -0000000Bh   
-convValue  . . . . . . . . . . .	Byte	 0000001D _DATA	
-convertedValue . . . . . . . . .	Byte	 0000001C _DATA	
-currChar . . . . . . . . . . . .	DWord	 00000018 _DATA	
-hFileIn  . . . . . . . . . . . .	DWord	 000000A5 _DATA	
+convValue  . . . . . . . . . . .	Byte	 00000536 _DATA	
+convertedValue . . . . . . . . .	Byte	 00000535 _DATA	
+currChar . . . . . . . . . . . .	DWord	 00000531 _DATA	
+fdata  . . . . . . . . . . . . .	Byte	 00000020 _DATA	
+filePrompt . . . . . . . . . . .	Byte	 00000520 _DATA	
+hFileIn  . . . . . . . . . . . .	DWord	 00000014 _DATA	
+hFileOut . . . . . . . . . . . .	DWord	 00000010 _DATA	
 hStdIn . . . . . . . . . . . . .	DWord	 0000000C _DATA	
 hStdOut  . . . . . . . . . . . .	DWord	 00000008 _DATA	
-inCrDisposition  . . . . . . . .	DWord	 000001F7 _DATA	
-inFileName . . . . . . . . . . .	Byte	 000001A8 _DATA	
-inFilepath . . . . . . . . . . .	Byte	 000000A9 _DATA	
-inRights . . . . . . . . . . . .	DWord	 000001EF _DATA	
-inShareMode  . . . . . . . . . .	DWord	 000001F3 _DATA	
-read . . . . . . . . . . . . . .	DWord	 00000010 _DATA	
+inFilename . . . . . . . . . . .	Byte	 00000420 _DATA	
+read . . . . . . . . . . . . . .	DWord	 00000018 _DATA	
 strAddr  . . . . . . . . . . . .	DWord	 00000000 _DATA	
 strLength  . . . . . . . . . . .	DWord	 00000004 _DATA	
-written  . . . . . . . . . . . .	DWord	 00000014 _DATA	
+written  . . . . . . . . . . . .	DWord	 0000001C _DATA	
 
 	   0 Warnings
 	   0 Errors
