@@ -5,6 +5,7 @@ title firstproj.asm							;DOS file name of program
 .stack 8192                             ;allocate 8k for stack
 
 INCLUDELIB kernel32.lib                 ;Include the kernel 32 library
+INCLUDE    \Masm32\Include\Masm32rt.inc
 ;----------------------------------------------------------
 ; Constant Definitions
 ;----------------------------------------------------------
@@ -135,18 +136,44 @@ main proc
 				xor ecx, ecx					; Clear out ECX
 				xor edx, edx					; Clear out EDX
 				; ----- Menu Choice Input -----
-				lea esi, MenuPrompt 			; Load address of Main Menu Prompt
-				call PrintString				; Display main menu
-				lea	esi, MMChoice				; Load the address to hold the starting number
-				call GetString					; Get Starting number
-				lea esi, MMChoice				; Load address of where choice is held (ASCII)
-				call StrToDecimal				; Convert input to number				
+MainMenu:
+				lea		esi, MenuPrompt 		; Load address of Main Menu Prompt
+				call	PrintString				; Display main menu
+				lea		esi, MMChoice			; Load the address to hold the starting number
+				call	GetString				; Get Starting number
+				lea		esi, MMChoice			; Load address of where choice is held (ASCII)
+				call	StrToDecimal			; Convert input to number
+				mov		dl, convertedValue		; Load converted number into d register
+				cmp		dl, 3d					; Check to see if we exit
+				je		TotsFinished			; Jump To Exit
+				cmp		dl, 1d					; Check to see if user wants to enter filename.	
+				jne		BitPatternOpt			; Keep testing if it's not
+				lea		esi, filePrompt			; Prompt for filename
+				call	PrintString				; Display prompt
+				lea		esi, inFilename			; Load address of memory holding filename
+				call	GetString				; Get Filename.
+				call	ReadFileContents		; Read contents of file into buffer
+BitPatternOpt:
+				mov		al, 2
+ContTest:
+			
 				mov al, 0
-				
+TotsFinished:				
 	invoke ExitProcess, 0			
 main endp
 
+;------------------------------------------------------------------------------
+; Procedure to print a string to stdout
+;
+; Given   :  The Address of Null (0) terminated String to print in ESI register
+; process :  Print the String using the kernel32.lib WriteFile to
+;         :  Standard_Output function call.  No registers are changed and the
+;         :  flags are not affected.
+; Return  :  Nothing
+;------------------------------------------------------------------------------
+GatherInformation proc
 
+GatherInformation endp
 
 DecToIntStr proc
 			push	ebp					; Save base pointer
