@@ -1,0 +1,246 @@
+Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 22:23:24
+FileIOInclud						     Page 1 - 1
+
+
+				title FileIOInclude
+
+				.586
+				.model flat, stdcall
+				.stack 8192
+				;----------------------------------------------------------
+				; Constant Definitions
+				;----------------------------------------------------------
+
+ = 0000000A			NUM_LINES equ 10
+ = 00000050			MAX_LINE  equ 80
+
+ =-0000000A			STD_INPUT  equ -10d                     ;Function number for keyboard input
+ =-0000000B			STD_OUTPUT equ -11d                     ;Function number for monitor output
+
+ = 0000000A			LF equ 10d                              ;Line feed ascii constant
+ = 0000000D			CR equ 13d                              ;Carriage return constant
+ = CR,LF			NEWLINE equ CR,LF                       ;Combine CR and LF for carriage return
+
+ = 00000001			ENABLE_PROCESSED_INPUT  equ 1           ;Flag to turn off line buffering
+ = 00000001			ENABLE_PROCESSED_OUTPUT equ 1           ;Flag to turn off line bufferin
+ = 00000003			ENABLE_LINE_WRAP        equ 3           ;Flag to trun line wrap on
+ = 00000007			DISABLE_PROCESSED_INPUT equ 7           ;Flag to turn on line buffering
+
+ = 00000001			CREATE_NEW    EQU  1                    ;Parameter for creating a new file
+ = 00000002			CREATE_ALWAYS EQU  2                    ;Always create (overwrite existing)
+ = 00000003			OPEN_EXISTING EQU  3                    ;Parameter for opening an existing file
+ = 80000000			GENERIC_READ  EQU  80000000h            ;Parameter for reading a file
+ = 40000000			GENERIC_WRITE EQU  40000000h            ;Parameter for writing a file
+
+ = 00000001			FILE_SHARE_READ   equ 1
+ = 00000002			FILE_SHARE_WRITE  equ 2
+ = 00000004			FILE_SHARE_DELETE equ 4
+
+ = 00000080			FILE_ATTRIBUTE_NORMAL equ 80h
+
+ = 00000004			HANDLE equ dword
+
+				;----------------------------------------------------------
+				; prototype Declarations for libarary imports
+				;----------------------------------------------------------
+
+				ExitProcess proto,
+				    dwExitCode:dword				   ;The exit code for the process 
+
+				GetStdHandle proto, 
+					nStdHandle: dword                  ;The standard device. -10=INPUT, -11=OUTPUT, -13=ERROR
+
+				SetConsoleMode proto,                  
+				    hConsoleHandle:dword,              ;A handle to the console input buffer or a console screen buffer
+					dwMode:dword                       ;The input or output mode to be set. 
+
+				ReadFile proto,	
+				    hFile:dword,                       ;A handle to the device
+					lpBuffer:near32,                   ;A pointer to the buffer that receives the data read 
+				    nNumberOfCharsToRead:dword,        ;The maximum number of bytes to be read.
+				    lpNumberOfbytesRead:near32,        ;A pointer to the variable that receives the number of bytes read
+				    lpOverlapped:near32                ;A pointer to an OVERLAPPED structure is required if the hFile parameter 
+					                                   ;was opened with FILE_FLAG_OVERLAPPED, otherwise it can be NULL.
+
+				WriteFile proto,                  
+				    hFile:dword, lpBuffer:near32,      ;A handle to the device
+				    nNumberOfCharsToWrite:dword,       ;The maximum number of bytes to be written.
+				    lpNumberOfbytesWritten:near32,     ;A pointer to the variable that receives the number of bytes written
+				    lpOverlapped:near32                ;A pointer to an OVERLAPPED structure is required if the hFile parameter 
+					                                   ;was opened with FILE_FLAG_OVERLAPPED, otherwise it can be NULL.
+
+
+				CloseHandle proto,                     ;Prototype for closing a file
+				    fHandle:dword
+
+				GetLastError proto                     ;Prototype for getting specific error
+
+
+				CreateFileA proto,                     ;Prototype for CreateFile, used for getting handle to new or existin file
+				    lpFileName:near32,
+					dwDesiredAccess:dword,
+					dwShareMode:dword,
+					lpSecurityAttributes:near32,
+					dwCreationDisposition:dword,
+					dwFlagsAndAttributes:dword,
+					hTemplateFile:dword
+
+				SetConsoleCursorPosition proto,        ;Prototype for setting cursor position
+					hConsoleOutput:dword,
+					dwCursorPosition:dword
+
+				GetConsoleScreenBufferInfo proto,      ;Prototype for getting console info
+					hConsoleOutput:dword,
+					lpConsoleScreenBufferInfo:near32
+
+				 FillConsoleOutputCharacterA proto,    ;Prototype for filling screen with character (used for clear screen)
+					hConsoleOutput:dword,
+					cCharacter:byte,
+					nLength:dword,
+					dwWriteCoord:dword,
+					lpNumberOfCharsWritten:near32
+
+				;----------------------------------------------------------
+				; Data Segment -- Global Variables
+				;----------------------------------------------------------
+ 00000000			.data
+
+ 00000000 00000000			strAddr			dd  ?
+ 00000004 00000000			strLength		dd  ?
+ 00000008 00000000			hStdOut			dd  ?
+ 0000000C 00000000			hStdIn			dd  ?
+ 00000010 00000000			hFileOut        dd  ?
+ 00000014 00000000			hFileIn         dd  ?
+ 00000018 00000000			read			dd  ?
+ 0000001C 00000000			written			dd  ?	
+
+ 00000020  00000400 [			fdata           db 1024 dup(0)
+	    00
+	   ]
+ 00000420  00000100 [			inFilename      db 256 dup(0)
+	    00
+	   ]
+ 00000520 45 6E 74 65 72		filePrompt      db "Enter filename: ",0
+	   20 66 69 6C 65
+	   6E 61 6D 65 3A
+	   20 00
+
+					
+				;----------------------------------------------------------
+				; Code Segment
+				;----------------------------------------------------------
+ 00000000			.code
+
+					
+				;------------------------------------------------------------------------------
+				; Procedure to read file (filename in inFilename) into fdata buffer
+				;------------------------------------------------------------------------------
+ 00000000			ReadFileContents  proc                 ; Define procedure
+ 00000000  60			            pushad                     ; save all registers
+ 00000001  9C			            pushfd                     ; save flags
+
+				            invoke CreateFileA, near32 ptr inFilename, GENERIC_READ, FILE_SHARE_READ,
+							   0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0
+
+ 0000001E  A3 00000014 R	            mov hFileIn, eax           ; save the handle
+
+ 00000023  B9 00000400		            mov ecx, 1024d             ; string length
+ 00000028  89 0D 00000004 R	            mov strLength, ecx         ; maximum string to accept
+ 0000002E  89 35 00000000 R	            mov strAddr, esi           ; save pointer to input string
+				            invoke ReadFile,           ; invoke standard ReadFile with
+				              hFileIn,                 ;   file handle for keyboard
+				              strAddr,                 ;   address of string
+				              strLength,               ;   length of string
+				              near32 ptr read,         ;   variable for # bytes read
+				              0                        ;   overlapped mode
+ 00000052  8B 0D 00000018 R	            mov ecx, read              ; number of bytes read
+
+ 00000058  9D			            popfd                      ; restore flags
+ 00000059  61			            popad                      ; restore registers
+ 0000005A  C3			            ret                        ; return to caller
+ 0000005B			ReadFileContents   endp
+
+
+				end	
+Microsoft (R) Macro Assembler Version 11.00.60223.1	    03/06/13 22:23:24
+FileIOInclud						     Symbols 2 - 1
+
+
+
+
+Segments and Groups:
+
+                N a m e                 Size     Length   Align   Combine Class
+
+FLAT . . . . . . . . . . . . . .	GROUP
+STACK  . . . . . . . . . . . . .	32 Bit	 00002000 Para	  Stack	  'STACK'	 
+_DATA  . . . . . . . . . . . . .	32 Bit	 00000531 Para	  Public  'DATA'	
+_TEXT  . . . . . . . . . . . . .	32 Bit	 0000005B Para	  Public  'CODE'	
+
+
+Procedures, parameters, and locals:
+
+                N a m e                 Type     Value    Attr
+
+CloseHandle  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+CreateFileA  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ExitProcess  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+FillConsoleOutputCharacterA  . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetConsoleScreenBufferInfo . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetLastError . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetStdHandle . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadFileContents . . . . . . . .	P Near	 00000000 _TEXT	Length= 0000005B Public STDCALL
+ReadFile . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleCursorPosition . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleMode . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteFile  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+
+
+Symbols:
+
+                N a m e                 Type     Value    Attr
+
+@CodeSize  . . . . . . . . . . .	Number	 00000000h   
+@DataSize  . . . . . . . . . . .	Number	 00000000h   
+@Interface . . . . . . . . . . .	Number	 00000003h   
+@Model . . . . . . . . . . . . .	Number	 00000007h   
+@code  . . . . . . . . . . . . .	Text   	 _TEXT
+@data  . . . . . . . . . . . . .	Text   	 FLAT
+@fardata?  . . . . . . . . . . .	Text   	 FLAT
+@fardata . . . . . . . . . . . .	Text   	 FLAT
+@stack . . . . . . . . . . . . .	Text   	 FLAT
+CREATE_ALWAYS  . . . . . . . . .	Number	 00000002h   
+CREATE_NEW . . . . . . . . . . .	Number	 00000001h   
+CR . . . . . . . . . . . . . . .	Number	 0000000Dh   
+DISABLE_PROCESSED_INPUT  . . . .	Number	 00000007h   
+ENABLE_LINE_WRAP . . . . . . . .	Number	 00000003h   
+ENABLE_PROCESSED_INPUT . . . . .	Number	 00000001h   
+ENABLE_PROCESSED_OUTPUT  . . . .	Number	 00000001h   
+FILE_ATTRIBUTE_NORMAL  . . . . .	Number	 00000080h   
+FILE_SHARE_DELETE  . . . . . . .	Number	 00000004h   
+FILE_SHARE_READ  . . . . . . . .	Number	 00000001h   
+FILE_SHARE_WRITE . . . . . . . .	Number	 00000002h   
+GENERIC_READ . . . . . . . . . .	Number	 -80000000h   
+GENERIC_WRITE  . . . . . . . . .	Number	 40000000h   
+HANDLE . . . . . . . . . . . . .	Number	 00000004h   
+LF . . . . . . . . . . . . . . .	Number	 0000000Ah   
+MAX_LINE . . . . . . . . . . . .	Number	 00000050h   
+NEWLINE  . . . . . . . . . . . .	Text   	 CR,LF
+NUM_LINES  . . . . . . . . . . .	Number	 0000000Ah   
+OPEN_EXISTING  . . . . . . . . .	Number	 00000003h   
+STD_INPUT  . . . . . . . . . . .	Number	 -0000000Ah   
+STD_OUTPUT . . . . . . . . . . .	Number	 -0000000Bh   
+fdata  . . . . . . . . . . . . .	Byte	 00000020 _DATA	
+filePrompt . . . . . . . . . . .	Byte	 00000520 _DATA	
+hFileIn  . . . . . . . . . . . .	DWord	 00000014 _DATA	
+hFileOut . . . . . . . . . . . .	DWord	 00000010 _DATA	
+hStdIn . . . . . . . . . . . . .	DWord	 0000000C _DATA	
+hStdOut  . . . . . . . . . . . .	DWord	 00000008 _DATA	
+inFilename . . . . . . . . . . .	Byte	 00000420 _DATA	
+read . . . . . . . . . . . . . .	DWord	 00000018 _DATA	
+strAddr  . . . . . . . . . . . .	DWord	 00000000 _DATA	
+strLength  . . . . . . . . . . .	DWord	 00000004 _DATA	
+written  . . . . . . . . . . . .	DWord	 0000001C _DATA	
+
+	   0 Warnings
+	   0 Errors
